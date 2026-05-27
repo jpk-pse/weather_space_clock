@@ -12,28 +12,6 @@ how much of your Claude quota you've used.
 
 ![Claude Usage Monitor running on the CYD desk display](preview.webp)
 
-```
-┌─ CLAUDE USAGE ─────────── -55dBm 42s ─┐
-│ 5-HOUR WINDOW                     24% │
-│ ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
-│ 7-DAY WINDOW                       4% │
-│ ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
-│ 5H RESETS IN        7D RESETS IN      │
-│ 3h42m               6d14h             │
-│ ─────────────────────────────────────  │
-│ 5H USED             7D USED           │
-│ 24%                 4%                │
-└─ BOOT=brightness  BTN=refresh now ────┘
-```
-
-- **5-HOUR WINDOW** — your usage in the rolling 5-hour rate limit window
-- **7-DAY WINDOW** — your usage in the rolling 7-day rate limit window
-- **Resets in** — countdown to when each window resets
-- **Bar colors** — green under 50%, amber 50–80%, red above 80%
-- **Header right** — WiFi signal strength and seconds since last fetch
-
----
-
 ## How it works
 
 The ESP32 makes a minimal HTTPS request to `api.anthropic.com/v1/messages`
