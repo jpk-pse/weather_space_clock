@@ -94,13 +94,6 @@ Printables: https://www.printables.com/model/645166
 Snaps onto the front shell and includes an angled desk stand so the display
 sits at a comfortable viewing angle on your desk.
 
-### Printing notes
-
-- Print in PLA at 0.2mm layer height
-- No supports needed for either part
-- The stand piece has a slot for the micro-USB cable to exit cleanly from
-  the rear — pair with a right-angle micro-USB adapter for the tidiest result
-- Both parts clip together with no screws required
 
 ---
 
@@ -276,16 +269,3 @@ and presents them as a dropdown. Credentials are validated in the browser before
 submission. After saving, the token is encrypted and stored in NVS, then the
 device reboots.
 
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| Display stays black | Check `User_Setup.h` was copied correctly |
-| Upload fails mid-way | Use a data USB cable; try 115200 baud; hold BOOT during "Connecting..." |
-| `FS` not declared error | Make sure `#include <FS.h>` is first in `CYD_ClaudeUsage.ino` |
-| WiFi not found in scan | ESP32 is 2.4 GHz only — check your router broadcasts a 2.4 GHz network |
-| `auth_failed` on display | Token expired — hold BOOT 5s to reset, run `claude setup-token` again |
-| Sketch too large error | Set Partition Scheme to **Huge APP (3MB No OTA)** |
-| Display flickers on update | You have an older `ui.ino` — re-flash with the latest version |
