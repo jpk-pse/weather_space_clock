@@ -120,16 +120,21 @@ or right half of the screen to cycle pages.
 ## File structure
 
 ```
-weather_space_clock/
-├── weather_space_clock.ino   Main: setup, loop, structs, touch, page nav
-├── ui.ino                    All page drawers, navbar, themes, animated icons
-├── weather.ino               Open-Meteo fetcher
-├── space.ino                 ISS + astros + NOAA SWPC + Launch Library fetchers
-├── sky.ino                   Moon phase math (no network)
-├── User_Setup.h              TFT_eSPI pin config for the CYD
-├── secrets.h.example         Template — copy to secrets.h locally
-└── README.md
+weather_space_clock/                  Repo root (README, .gitignore)
+├── README.md
+├── .gitignore
+└── weather_space_clock/              Arduino sketch folder
+    ├── weather_space_clock.ino       Main: setup, loop, structs, touch, page nav
+    ├── ui.ino                        All page drawers, navbar, themes, animated icons
+    ├── weather.ino                   Open-Meteo fetcher
+    ├── space.ino                     ISS + astros + NOAA SWPC + Launch Library fetchers
+    ├── sky.ino                       Moon phase math (no network)
+    ├── User_Setup.h                  TFT_eSPI pin config for the CYD
+    └── secrets.h.example             Template — copy to secrets.h locally
 ```
+
+To open in Arduino IDE: navigate to the inner `weather_space_clock/` folder
+and open `weather_space_clock.ino`. All `.ino` tabs load automatically.
 
 ---
 
