@@ -166,11 +166,20 @@ TFT_eSPI lcd;
 #define BL_PIN     21
 
 // ── Shared state ─────────────────────────────────────
+// `weather`, `iss`, `spwx`, `launch` are written by the fetcher task on core 0
+// and read by the display loop on core 1. The mutex makes the writes atomic
+// from the reader's point of view: the fetcher writes into a local struct
+// during the (slow) HTTP call, then briefly takes the mutex to memcpy it into
+// the global. Reader takes the mutex just long enough to snapshot all four
+// structs into locals, then renders without holding it.
+// `sky` is calculated and read only on core 1 — no mutex needed.
 static WeatherData    weather;
 static ISSData        iss;
 static SpaceWxData    spwx;
 static LaunchData     launch;
 static SkyData        sky;
+
+static SemaphoreHandle_t dataMutex = NULL;
 
 static unsigned long lastWeatherMs = 0;
 static unsigned long lastIssMs     = 0;
@@ -190,7 +199,9 @@ static void halInit() {
     ledcWrite(BL_PIN, BRIGHTNESS_PWM);
 }
 
-// ── WiFi connect with on-screen retry, no restart ────
+// ── WiFi connect: with-UI version (core 1 only) ──────
+// Draws "Connecting..." to the LCD. Safe ONLY from core 1 (the only core
+// that touches TFT_eSPI).
 static bool connectWiFi() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -205,6 +216,22 @@ static bool connectWiFi() {
     return true;
 }
 
+// Silent reconnect helper used by the fetcher task on core 0.
+// Does NOT touch TFT_eSPI (which is not multi-thread safe).
+static bool connectWiFiSilent() {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    int ticks = 0;
+    while (WiFi.status() != WL_CONNECTED) {
+        ticks++;
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (ticks > WIFI_CONNECT_TIMEOUT_S * 2) return false;
+    }
+    Serial.printf("[wifi] reconnected (core %d), IP=%s\n",
+                  xPortGetCoreID(), WiFi.localIP().toString().c_str());
+    return true;
+}
+
 static void syncTime() {
     configTzTime(LOCAL_TZ, "pool.ntp.org", "time.nist.gov", "time.google.com");
     struct tm t;
@@ -212,33 +239,82 @@ static void syncTime() {
 }
 
 // ── Per-page refresh dispatchers ─────────────────────
+// Each fetcher writes to a local temp struct (the slow HTTP call); only the
+// brief memcpy into the global is mutex-protected. This keeps the renderer
+// on core 1 unblocked even during a 2-second HTTPS round-trip.
 static void maybeRefreshAll() {
     unsigned long now = millis();
 
     if (now - lastWeatherMs >= (unsigned long)WEATHER_REFRESH_SEC * 1000UL ||
         lastWeatherMs == 0) {
-        fetchWeather(weather);
+        WeatherData tmp;
+        fetchWeather(tmp);
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&weather, &tmp, sizeof(weather));
+        xSemaphoreGive(dataMutex);
         lastWeatherMs = now;
     }
     if (now - lastIssMs >= (unsigned long)ISS_REFRESH_SEC * 1000UL ||
         lastIssMs == 0) {
-        fetchISS(iss);
+        // fetchISS overwrites everything except peopleInSpace; snapshot the
+        // current value so we don't clobber it.
+        ISSData tmp;
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&tmp, &iss, sizeof(tmp));
+        xSemaphoreGive(dataMutex);
+        fetchISS(tmp);
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&iss, &tmp, sizeof(iss));
+        xSemaphoreGive(dataMutex);
         lastIssMs = now;
     }
     if (now - lastAstrosMs >= (unsigned long)ASTROS_REFRESH_SEC * 1000UL ||
         lastAstrosMs == 0) {
-        fetchAstros(iss);  // updates only peopleInSpace
+        // fetchAstros only updates peopleInSpace; snapshot then publish that
+        // single field to avoid clobbering ISS position.
+        ISSData tmp;
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&tmp, &iss, sizeof(tmp));
+        xSemaphoreGive(dataMutex);
+        fetchAstros(tmp);
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        iss.peopleInSpace = tmp.peopleInSpace;
+        xSemaphoreGive(dataMutex);
         lastAstrosMs = now;
     }
     if (now - lastSpaceWxMs >= (unsigned long)SPACEWX_REFRESH_SEC * 1000UL ||
         lastSpaceWxMs == 0) {
-        fetchSpaceWx(spwx);
+        SpaceWxData tmp;
+        fetchSpaceWx(tmp);
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&spwx, &tmp, sizeof(spwx));
+        xSemaphoreGive(dataMutex);
         lastSpaceWxMs = now;
     }
     if (now - lastLaunchMs >= (unsigned long)LAUNCH_REFRESH_SEC * 1000UL ||
         lastLaunchMs == 0) {
-        fetchLaunch(launch);
+        LaunchData tmp;
+        fetchLaunch(tmp);
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&launch, &tmp, sizeof(launch));
+        xSemaphoreGive(dataMutex);
         lastLaunchMs = now;
+    }
+}
+
+// ── Fetcher task — runs on core 0 ────────────────────
+// Loops forever: maintain WiFi connection, refresh any data whose interval
+// has elapsed, then sleep 500 ms. All HTTP blocking happens here, off the
+// main loop, so touch and display stay responsive on core 1.
+static void fetcherTask(void* arg) {
+    Serial.printf("[fetcher] task started on core %d\n", xPortGetCoreID());
+    for (;;) {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("[wifi] dropped — silent reconnect");
+            connectWiFiSilent();
+        }
+        maybeRefreshAll();
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
@@ -332,36 +408,63 @@ void setup() {
     uiBootProgress(50, "Syncing time...");
     syncTime();
 
+    // Create the data mutex BEFORE the first fetch so maybeRefreshAll()
+    // can take/give it safely.
+    dataMutex = xSemaphoreCreateMutex();
+
     uiBootProgress(80, "Fetching data...");
-    maybeRefreshAll();
+    maybeRefreshAll();   // initial fetch on core 1 so first frame has data
 
     uiBootProgress(100, "Ready");
     delay(300);
 
     forceRedraw = true;
+
+    // Launch the background fetcher on core 0. From here on the main loop
+    // (core 1) never touches the network — touch and display stay smooth
+    // even during HTTPS round-trips.
+    xTaskCreatePinnedToCore(
+        fetcherTask,    // task function
+        "fetcher",      // name
+        8192,           // stack size (HTTPClient + ArduinoJson need a few KB)
+        NULL,           // params
+        1,              // priority (1 = above idle, below most system tasks)
+        NULL,           // handle (not needed)
+        0               // core 0 (Arduino's loop runs on core 1 by default)
+    );
 }
 
 // ── Loop ─────────────────────────────────────────────
+// Runs on core 1. No network I/O happens here — the fetcher task on core 0
+// keeps `weather`, `iss`, `spwx`, `launch` fresh in the background.
 void loop() {
-    // Reconnect WiFi if dropped
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[wifi] disconnected, reconnecting...");
-        connectWiFi();
-    }
-
     handleTouch();
-    maybeRefreshAll();
 
-    // Compute sky data each tick (cheap, no network)
+    // calcSky is read+written only on this core, so no mutex needed.
     calcSky(sky);
 
-    // Render once per second
+    // Render once per second.
     static unsigned long lastTick = 0;
     if (forceRedraw || (millis() - lastTick >= 1000)) {
         lastTick = millis();
         struct tm t;
         getLocalTime(&t, 100);
-        uiRender(currentPage, t, weather, iss, spwx, sky, launch,
+
+        // Snapshot under mutex — held for microseconds, not the duration of
+        // the render. Renderer works on local copies and never blocks the
+        // fetcher (and vice versa).
+        WeatherData  wSnap;
+        ISSData      issSnap;
+        SpaceWxData  spSnap;
+        LaunchData   lnSnap;
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        memcpy(&wSnap,   &weather, sizeof(weather));
+        memcpy(&issSnap, &iss,     sizeof(iss));
+        memcpy(&spSnap,  &spwx,    sizeof(spwx));
+        memcpy(&lnSnap,  &launch,  sizeof(launch));
+        xSemaphoreGive(dataMutex);
+
+        uiRender(currentPage, t, wSnap, issSnap, spSnap, sky, lnSnap,
                  WiFi.RSSI(), forceRedraw);
         forceRedraw = false;
     }
