@@ -337,7 +337,8 @@ static void drawClockPage(const struct tm& t, const WeatherData& w, int rssi) {
     static const char* DAYS[]   = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
     static const char* MONTHS[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
     char date[24];
-    snprintf(date, sizeof(date), "%s, %s %d", DAYS[t.tm_wday], MONTHS[t.tm_mon], t.tm_mday);
+    snprintf(date, sizeof(date), "%s, %s %d, %d",
+             DAYS[t.tm_wday], MONTHS[t.tm_mon], t.tm_mday, t.tm_year + 1900);
     if (strcmp(date, lastDate) != 0) {
         drawText(8, 6, 220, 12, date, theme.headerFg, 1, theme.headerBg);
         strlcpy(lastDate, date, sizeof(lastDate));
@@ -397,7 +398,10 @@ static void drawClockPage(const struct tm& t, const WeatherData& w, int rssi) {
         if (isnan(w.tempF)) strlcpy(temp, "--", sizeof(temp));
         else                snprintf(temp, sizeof(temp), "%.0f", w.tempF);
         if (strcmp(temp, lastTemp) != 0) {
-            drawText(64, 102, 110, 44, "", theme.bg, 1, theme.bg);
+            // Clear width 88 ends at x=152 so the wipe never reaches the
+            // right-column text that starts at x=156. (Was 110, which clobbered
+            // the first 18 px of "Overcast" / "RH …" on every temp refresh.)
+            drawText(64, 102, 88, 44, "", theme.bg, 1, theme.bg);
             lcd.setTextColor(theme.accent, theme.bg);
             lcd.setTextSize(5);
             lcd.setCursor(64, 102);
@@ -408,6 +412,11 @@ static void drawClockPage(const struct tm& t, const WeatherData& w, int rssi) {
             lcd.setCursor(afterX, 102);
             lcd.print((char)247); lcd.print('F');
             strlcpy(lastTemp, temp, sizeof(lastTemp));
+            // Belt + suspenders: force the right-column text to redraw this
+            // tick in case anything overlapped during the clear/redraw.
+            lastCond[0]  = 0;
+            lastFeels[0] = 0;
+            lastHumid[0] = 0;
         }
         const char* cond = weatherCodeShort(w.weatherCode);
         if (strcmp(cond, lastCond) != 0) {
