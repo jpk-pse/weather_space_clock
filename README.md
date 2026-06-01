@@ -1,245 +1,149 @@
-# Claude Usage Monitor — CYD
+# Weather + Space Clock
 
-A standalone desk display that shows your Claude Code API usage in real time.
-Built for the **ESP32-2432S028R** ("Cheap Yellow Display") — a ~$18 all-in-one
-ESP32 board with a 2.8" touchscreen TFT. No laptop server, no extra hardware,
-no ongoing maintenance. Just power it on and it sits on your desk showing you
-how much of your Claude quota you've used.
+A 5-page touchscreen desk display on the **ESP32-2432S028R** ("Cheap Yellow
+Display"). Tap the lower-left or lower-right of the screen to cycle pages.
+
+Originally forked from [nimnim111/Claude-Monitor](https://github.com/nimnim111/Claude-Monitor)
+and rewritten end-to-end as a weather + space dashboard.
 
 ---
 
-## What it shows
+## Pages
 
-![Claude Usage Monitor running on the CYD desk display](img.webp)
+| # | Page | Data |
+|---|---|---|
+| 0 | **Clock + Weather** | Big clock, current temp + conditions, animated icon, today's hi/lo, sun rise/set, tomorrow forecast |
+| 1 | **ISS Live** | Current ISS lat/lon, altitude, velocity, distance from your location, # people in space |
+| 2 | **Space Weather** | Kp index (color-coded), aurora forecast bar, solar wind speed, latest solar flare class |
+| 3 | **Sky Tonight** | Moon phase (drawn glyph matches reality), illumination %, age in days, sun rise/set |
+| 4 | **Next Launch** | Provider, vehicle, mission name, live T- countdown, pad location |
 
-## How it works
+All five pages share a touchable bottom nav bar showing the current page name and dots for position.
 
-The ESP32 makes a minimal HTTPS request to `api.anthropic.com/v1/messages`
-every 60 seconds (configurable), sending a 1-token probe message:
-
-```json
-{ "model": "claude-haiku-4-5-20251001", "max_tokens": 1, "messages": [{"role": "user", "content": "."}] }
-```
-
-Anthropic's API returns rate-limit headers with every response:
-
-```
-anthropic-ratelimit-unified-5h-utilization: 0.24
-anthropic-ratelimit-unified-5h-reset: 1779792000
-anthropic-ratelimit-unified-7d-utilization: 0.04
-anthropic-ratelimit-unified-7d-reset: 1780322400
-```
-
-The device reads these headers, converts utilisation (0.0–1.0) to a percentage,
-and updates the display. The probe costs roughly 30 input tokens and 1 output
-token — about $0.003/month at 60-second intervals, well under 1% of your quota.
-
-Your OAuth token is stored in NVS flash, XOR-obfuscated using the device's
-unique MAC address as a key. It is never transmitted anywhere except directly
-to `api.anthropic.com` over HTTPS with certificate verification.
+The clock-and-weather page also re-tints its whole color theme based on the
+current weather code — sunny / partly cloudy / rainy / snowy / fog / thunderstorm
+/ clear-night each have a distinct palette.
 
 ---
 
 ## Hardware
 
-| Part | Price | Link |
+| Part | Approx. cost | Notes |
 |---|---|---|
-| ESP32-2432S028R (CYD) | ~$17 | [Amazon — DIYmall](https://www.amazon.com/DIYmall-ESP32-2432S028R-Dual-core-240X320-Display/dp/B0BVFXR313) |
+| **ESP32-2432S028R** (CYD, 2USB rev) | ~$17 | The 2USB revision is the newer one with both USB-C and micro-USB. Touch is on a separate VSPI bus. |
+| Short USB-C cable + wall charger | — | A 5V/2A+ wall charger is recommended over laptop USB — the radio current spike can brown out marginal USB ports. |
+| Optional: 3D-printed case | — | See [Printables](https://www.printables.com/) — search "CYD 2.8 case". |
 
 ---
 
-## 3D Printed Case
+## APIs used (all free, no API key required)
 
-The CYD fits neatly into a two-piece printed case. You need two separate
-models — one for the front shell and one for the back/stand:
-
-### Front shell
-**ESP32 2.8" CYD Screen Case (USB-C mod)**
-Printables: https://www.printables.com/model/691234
-
-Clean front bezel that frames the 2.8" screen. This version includes a
-modification for a USB-C port adapter so the cable exits more neatly than
-the stock micro-USB orientation.
-
-### Back and stand
-**ESP32 2.8" CYD Screen Case (back + stand)**
-Printables: https://www.printables.com/model/645166
-
-Snaps onto the front shell and includes an angled desk stand so the display
-sits at a comfortable viewing angle on your desk.
-
+| Source | Used for |
+|---|---|
+| [Open-Meteo](https://open-meteo.com/) | Weather, forecast, sunrise/sunset |
+| [WhereTheISS.at](https://wheretheiss.at/) | ISS position, altitude, velocity |
+| [Open Notify](http://open-notify.org/) | People currently in space (HTTP only, occasionally flaky) |
+| [NOAA SWPC](https://www.swpc.noaa.gov/) | Kp index, solar wind, X-ray flares |
+| [Launch Library 2](https://thespacedevs.com/llapi) | Next orbital launch worldwide |
+| `pool.ntp.org` / `time.nist.gov` | Wall clock |
 
 ---
 
-## Software setup
+## Setup
 
-### 1. Install Arduino IDE
-
+### 1. Install Arduino IDE 2.x
 Download from [arduino.cc](https://www.arduino.cc/en/software).
 
 ### 2. Add ESP32 board support
-
-Open Arduino IDE → **File → Preferences**, and add this URL to
-*Additional boards manager URLs*:
-
+**File → Preferences →** Additional boards manager URLs:
 ```
 https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 ```
-
-Then go to **Tools → Board → Boards Manager**, search **esp32**, and install
-the package by Espressif Systems.
+Then **Tools → Board → Boards Manager →** install **esp32** by Espressif.
 
 ### 3. Install libraries
-
-Go to **Sketch → Include Library → Manage Libraries** and install:
-
+**Sketch → Include Library → Manage Libraries →** install:
 - **TFT_eSPI** by Bodmer
-- **ArduinoJson** by Benoit Blanchon
+- **ArduinoJson** by Benoit Blanchon (v7.x)
+- **XPT2046_Touchscreen** by Paul Stoffregen
 
 ### 4. Configure TFT_eSPI for the CYD
-
-Copy `User_Setup.h` from this folder into your TFT_eSPI library directory,
-replacing the existing file:
-
-```bash
-# Linux / Mac
-cp User_Setup.h ~/Arduino/libraries/TFT_eSPI/User_Setup.h
-
-# Windows
-# Copy to: Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+Copy `User_Setup.h` from this repo into your TFT_eSPI library folder, replacing
+the existing file:
+```
+Windows: Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+Linux/Mac: ~/Arduino/libraries/TFT_eSPI/User_Setup.h
 ```
 
-This tells TFT_eSPI which pins the CYD uses. Without this step the display
-will not work.
-
-### 5. Open the sketch
-
-In Arduino IDE: **File → Open** → select the `CYD_ClaudeUsage_ino` folder.
-All `.ino` tabs load automatically.
-
-### 6. Select board and port
-
-- **Tools → Board → ESP32 Arduino → ESP32 Dev Module**
-- **Tools → Partition Scheme → Huge APP (3MB No OTA)**
-  *(required — the sketch is too large for the default partition)*
-- **Tools → Port → /dev/ttyUSB0** (Linux) or **COMx** (Windows)
-
-### 7. Upload
-
-Click the **Upload** button (→). The IDE compiles and flashes the firmware.
-While uploading, the CYD's blue LED flashes rapidly — this is normal.
-
-If the upload fails with "chip stopped responding":
-- Try a different USB cable (many micro-USB cables are charge-only)
-- Plug directly into your PC, not a USB hub
-- Lower upload speed: **Tools → Upload Speed → 115200**
-- Hold the BOOT button on the CYD during the "Connecting..." phase
-
----
-
-## First boot — provisioning
-
-On first boot (or after a factory reset), the CYD creates a WiFi hotspot:
-
+### 5. Set up credentials
+Copy `secrets.h.example` to `secrets.h` and fill in your WiFi info:
+```cpp
+#define WIFI_SSID  "YourNetworkName"
+#define WIFI_PASS  "YourPassword"
 ```
-SSID:     ClaudeMonitor-XXXX   (unique to your device)
-Password: shown on screen      (random 8 characters)
+`secrets.h` is gitignored — it won't be committed.
+
+### 6. Set your location
+In `weather_space_clock.ino`, update:
+```cpp
+#define LATITUDE   35.8109     // your latitude
+#define LONGITUDE -84.2333     // your longitude
+#define LOCAL_TZ   "EST5EDT,M3.2.0,M11.1.0"   // POSIX TZ string
 ```
+POSIX TZ string examples for the US:
+- Eastern: `EST5EDT,M3.2.0,M11.1.0`
+- Central: `CST6CDT,M3.2.0,M11.1.0`
+- Mountain: `MST7MDT,M3.2.0,M11.1.0`
+- Pacific: `PST8PDT,M3.2.0,M11.1.0`
 
-**Steps:**
-
-1. Connect your phone or laptop to the `ClaudeMonitor-XXXX` hotspot
-2. A setup page opens automatically — if not, navigate to **192.168.4.1**
-3. The page scans nearby WiFi networks and shows them as a dropdown
-4. Select your network (2.4 GHz only — the ESP32 does not support 5 GHz)
-5. Enter your WiFi password
-6. Get your OAuth token by running this in a terminal on your laptop:
-   ```bash
-   claude setup-token
-   ```
-   This opens a browser, asks you to log in to Claude, and prints a token
-   starting with `sk-ant-oat01-`. Copy the full token.
-7. Paste the token into the setup page
-8. Choose refresh interval and brightness
-9. Click **Save & Reboot**
-
-The device saves everything and reboots. From now on it connects automatically
-on every boot — no setup page again unless you factory reset.
-
----
-
-## Normal use
-
-After provisioning, every boot goes:
-
+### 7. Calibrate touch (one-time)
+At the top of `weather_space_clock.ino`, set:
+```cpp
+#define CALIBRATE_TOUCH 1
 ```
-Initializing → Config loaded → Connecting WiFi → Syncing time → Fetching usage → Dashboard
-```
+Upload. Open Serial Monitor at 115200. Tap each corner of the screen and watch
+the `[touch raw] x=… y=… z=…` lines. Record the smallest/largest x and y values
+seen, then paste them into the `TOUCH_RAW_*_MIN/MAX` defines below. Set
+`CALIBRATE_TOUCH` back to `0`. Re-upload.
 
-Takes about 5–10 seconds. Then the display refreshes automatically on the
-interval you chose (default 60 seconds).
+### 8. Board settings & upload
+- **Tools → Board** → ESP32 Dev Module
+- **Tools → Partition Scheme** → Huge APP (3MB No OTA)
+- **Tools → Port** → whichever COM port the CYD enumerated as
+- Click **Upload**
 
----
-
-## Buttons
-
-| Action | Result |
-|---|---|
-| Tap BOOT (GPIO 0) | Cycle screen brightness (4 levels: off → dim → normal → bright) |
-| Hold BOOT 5 seconds | Factory reset — wipes credentials, reboots into setup mode |
-| Tap GPIO35 button | Force refresh now |
-
-**Hold countdown:** when you hold BOOT, the footer turns red and shows
-"Keep holding Xs to factory reset..." — release any time before 5 seconds
-to cancel with no effect.
-
----
-
-## Changing WiFi or token
-
-Hold the BOOT button for 5 seconds on the dashboard. The device wipes all
-saved credentials and reboots into setup mode, showing the hotspot screen.
-Go through first-boot provisioning again with your new details.
+On boot you'll see a progress bar, then the clock + weather page. Tap the left
+or right half of the screen to cycle pages.
 
 ---
 
 ## File structure
 
 ```
-CYD_ClaudeUsage_ino/
-├── CYD_ClaudeUsage.ino   Main sketch — setup(), loop(), HAL, config, shared structs
-├── api.ino               Fetches usage from Anthropic rate-limit headers
-├── crypto.ino            XOR obfuscation of token using device MAC as key
-├── ui.ino                All display drawing, flicker-free partial redraws
-├── provision.ino         WiFi AP + captive portal web server for first-time setup
-└── User_Setup.h          TFT_eSPI pin configuration for the CYD
+weather_space_clock/
+├── weather_space_clock.ino   Main: setup, loop, structs, touch, page nav
+├── ui.ino                    All page drawers, navbar, themes, animated icons
+├── weather.ino               Open-Meteo fetcher
+├── space.ino                 ISS + astros + NOAA SWPC + Launch Library fetchers
+├── sky.ino                   Moon phase math (no network)
+├── User_Setup.h              TFT_eSPI pin config for the CYD
+├── secrets.h.example         Template — copy to secrets.h locally
+└── README.md
 ```
 
-### Tab responsibilities
+---
 
-**`CYD_ClaudeUsage.ino`** — the entry point. Defines all shared structs
-(`UsageData`, `EncryptedBlob`), `#include`s all libraries, initialises the
-display and buttons, runs the boot sequence, and handles the button logic in
-`loop()`.
+## Notes
 
-**`api.ino`** — makes the HTTPS probe request and parses the four rate-limit
-headers from the response. Uses a pinned GlobalSign root CA certificate for
-TLS verification rather than skipping it entirely.
-
-**`crypto.ino`** — `encryptToken()` XOR-obfuscates the OAuth token with the
-device's WiFi MAC address before writing to NVS. `decryptToken()` reverses it
-on boot. Not military-grade, but prevents the token sitting in plain text in
-flash memory.
-
-**`ui.ino`** — draws the dashboard using a flicker-free technique: the static
-chrome (header, labels, bar tracks, divider, footer) is drawn once and cached.
-Subsequent updates only repaint the regions that changed — bar fills, percentage
-text, countdown timers, and the header timestamp — with no `fillScreen()` call,
-eliminating the black flash between refreshes.
-
-**`provision.ino`** — when no credentials are saved, starts a WiFi access point
-and hosts a captive portal web server. The setup page scans nearby networks
-and presents them as a dropdown. Credentials are validated in the browser before
-submission. After saving, the token is encrypted and stored in NVS, then the
-device reboots.
-
+- **Touch on 2USB CYDs** is on a separate VSPI bus (XPT2046 controller).
+  TFT_eSPI's built-in `getTouch()` won't work — `XPT2046_Touchscreen` library
+  is used instead with its own SPI instance.
+- **All failures are soft** — no `ESP.restart()` calls anywhere. WiFi drops
+  reconnect in the loop, API failures show "(loading…)" or last good values,
+  the device never reboots itself.
+- **Refresh cadence** is tuned to minimize main-loop blocking for touch
+  responsiveness: weather every 15 min, ISS every 30 s, space weather hourly,
+  next launch hourly. ISS in particular was reduced from 8 s because the
+  blocking HTTP call was eating touch events.
+- **Brownout** has historically been a problem on CYDs with marginal USB
+  power. Use a wall charger and a thick USB cable, not a laptop port.

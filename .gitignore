@@ -1,0 +1,17 @@
+# Local credentials — never commit
+secrets.h
+
+# Arduino IDE build artifacts
+build/
+*.bin
+*.elf
+*.hex
+*.map
+
+# IDE/editor scratch
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

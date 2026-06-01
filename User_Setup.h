@@ -9,7 +9,7 @@
 #define TFT_CS   15
 #define TFT_DC    2
 #define TFT_RST  -1
-#define TOUCH_CS 33
+// #define TOUCH_CS 33   // disabled — 2USB CYD has touch on separate VSPI, handled in sketch by XPT2046_Touchscreen lib
 
 #define TFT_BL   21
 #define TFT_BACKLIGHT_ON HIGH
