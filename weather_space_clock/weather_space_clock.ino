@@ -242,63 +242,111 @@ static void syncTime() {
 // Each fetcher writes to a local temp struct (the slow HTTP call); only the
 // brief memcpy into the global is mutex-protected. This keeps the renderer
 // on core 1 unblocked even during a 2-second HTTPS round-trip.
+//
+// Failure handling: a failed fetch (tmp.ok == false) does NOT publish to the
+// global — the screen keeps showing the last good data. We also back off only
+// 60 s on failure (vs the full refresh interval) so transient API hiccups
+// recover quickly instead of locking us out for 15+ minutes.
+//
+// Every tmp struct is zero-initialised: a sub-fetch inside a multi-step
+// fetcher (e.g. fetchSpaceWx makes three GETs) might leave some fields unset
+// on partial failure. Zeroing avoids publishing uninitialised stack garbage
+// like "wind=1125984367km/s".
+#define FETCH_RETRY_AFTER_FAIL_SEC  60
+
 static void maybeRefreshAll() {
     unsigned long now = millis();
 
+    auto scheduleRetry = [&](unsigned long& lastMs, unsigned long intervalSec) {
+        // Set lastMs so the next attempt happens FETCH_RETRY_AFTER_FAIL_SEC
+        // from now instead of waiting the full interval.
+        lastMs = now - (intervalSec * 1000UL) + (FETCH_RETRY_AFTER_FAIL_SEC * 1000UL);
+    };
+
     if (now - lastWeatherMs >= (unsigned long)WEATHER_REFRESH_SEC * 1000UL ||
         lastWeatherMs == 0) {
-        WeatherData tmp;
+        WeatherData tmp = {};
         fetchWeather(tmp);
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        memcpy(&weather, &tmp, sizeof(weather));
-        xSemaphoreGive(dataMutex);
-        lastWeatherMs = now;
+        if (tmp.ok) {
+            xSemaphoreTake(dataMutex, portMAX_DELAY);
+            memcpy(&weather, &tmp, sizeof(weather));
+            xSemaphoreGive(dataMutex);
+            lastWeatherMs = now;
+        } else {
+            Serial.printf("[weather] fail (%s) — retry in %ds\n",
+                          tmp.error, FETCH_RETRY_AFTER_FAIL_SEC);
+            scheduleRetry(lastWeatherMs, WEATHER_REFRESH_SEC);
+        }
     }
     if (now - lastIssMs >= (unsigned long)ISS_REFRESH_SEC * 1000UL ||
         lastIssMs == 0) {
         // fetchISS overwrites everything except peopleInSpace; snapshot the
         // current value so we don't clobber it.
-        ISSData tmp;
+        ISSData tmp = {};
         xSemaphoreTake(dataMutex, portMAX_DELAY);
         memcpy(&tmp, &iss, sizeof(tmp));
         xSemaphoreGive(dataMutex);
         fetchISS(tmp);
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        memcpy(&iss, &tmp, sizeof(iss));
-        xSemaphoreGive(dataMutex);
-        lastIssMs = now;
+        if (tmp.ok) {
+            xSemaphoreTake(dataMutex, portMAX_DELAY);
+            memcpy(&iss, &tmp, sizeof(iss));
+            xSemaphoreGive(dataMutex);
+            lastIssMs = now;
+        } else {
+            Serial.printf("[iss] fail (%s) — retry in %ds\n",
+                          tmp.error, FETCH_RETRY_AFTER_FAIL_SEC);
+            scheduleRetry(lastIssMs, ISS_REFRESH_SEC);
+        }
     }
     if (now - lastAstrosMs >= (unsigned long)ASTROS_REFRESH_SEC * 1000UL ||
         lastAstrosMs == 0) {
-        // fetchAstros only updates peopleInSpace; snapshot then publish that
-        // single field to avoid clobbering ISS position.
-        ISSData tmp;
+        // fetchAstros only updates peopleInSpace. Failures are tolerated
+        // silently — Open Notify is known flaky and a -1 here shouldn't
+        // disturb the rest of the ISS data.
+        ISSData tmp = {};
         xSemaphoreTake(dataMutex, portMAX_DELAY);
         memcpy(&tmp, &iss, sizeof(tmp));
         xSemaphoreGive(dataMutex);
+        int prevCount = tmp.peopleInSpace;
         fetchAstros(tmp);
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        iss.peopleInSpace = tmp.peopleInSpace;
-        xSemaphoreGive(dataMutex);
-        lastAstrosMs = now;
+        if (tmp.peopleInSpace != prevCount && tmp.peopleInSpace >= 0) {
+            xSemaphoreTake(dataMutex, portMAX_DELAY);
+            iss.peopleInSpace = tmp.peopleInSpace;
+            xSemaphoreGive(dataMutex);
+            lastAstrosMs = now;
+        } else {
+            scheduleRetry(lastAstrosMs, ASTROS_REFRESH_SEC);
+        }
     }
     if (now - lastSpaceWxMs >= (unsigned long)SPACEWX_REFRESH_SEC * 1000UL ||
         lastSpaceWxMs == 0) {
-        SpaceWxData tmp;
+        SpaceWxData tmp = {};
         fetchSpaceWx(tmp);
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        memcpy(&spwx, &tmp, sizeof(spwx));
-        xSemaphoreGive(dataMutex);
-        lastSpaceWxMs = now;
+        if (tmp.ok) {
+            xSemaphoreTake(dataMutex, portMAX_DELAY);
+            memcpy(&spwx, &tmp, sizeof(spwx));
+            xSemaphoreGive(dataMutex);
+            lastSpaceWxMs = now;
+        } else {
+            Serial.printf("[spwx] fail (%s) — retry in %ds\n",
+                          tmp.error, FETCH_RETRY_AFTER_FAIL_SEC);
+            scheduleRetry(lastSpaceWxMs, SPACEWX_REFRESH_SEC);
+        }
     }
     if (now - lastLaunchMs >= (unsigned long)LAUNCH_REFRESH_SEC * 1000UL ||
         lastLaunchMs == 0) {
-        LaunchData tmp;
+        LaunchData tmp = {};
         fetchLaunch(tmp);
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        memcpy(&launch, &tmp, sizeof(launch));
-        xSemaphoreGive(dataMutex);
-        lastLaunchMs = now;
+        if (tmp.ok) {
+            xSemaphoreTake(dataMutex, portMAX_DELAY);
+            memcpy(&launch, &tmp, sizeof(launch));
+            xSemaphoreGive(dataMutex);
+            lastLaunchMs = now;
+        } else {
+            Serial.printf("[launch] fail (%s) — retry in %ds\n",
+                          tmp.error, FETCH_RETRY_AFTER_FAIL_SEC);
+            scheduleRetry(lastLaunchMs, LAUNCH_REFRESH_SEC);
+        }
     }
 }
 
