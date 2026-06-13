@@ -67,7 +67,7 @@ static char  lastDate[24]  = "";
 static char  lastCond[24]  = "";
 static char  lastTemp[8]   = "";
 static char  lastFeels[16] = "";
-static char  lastHumid[8]  = "";
+static char  lastHumid[24] = "";
 static char  lastHiLo[24]  = "";
 static char  lastSunR[16]  = "";
 static char  lastSunS[16]  = "";
@@ -431,7 +431,9 @@ static void drawClockPage(const struct tm& t, const WeatherData& w, int rssi) {
             drawText(156, 124, 160, 10, feels, theme.dim, 1, theme.bg);
             strlcpy(lastFeels, feels, sizeof(lastFeels));
         }
-        char humid[8]; snprintf(humid, sizeof(humid), "RH %d%%", w.humidity);
+        char humid[24];
+        if (isnan(w.windMph)) snprintf(humid, sizeof(humid), "RH %d%%", w.humidity);
+        else                  snprintf(humid, sizeof(humid), "RH %d%%  Wind %.0f mph", w.humidity, w.windMph);
         if (strcmp(humid, lastHumid) != 0) {
             drawText(156, 138, 160, 10, humid, theme.dim, 1, theme.bg);
             strlcpy(lastHumid, humid, sizeof(lastHumid));

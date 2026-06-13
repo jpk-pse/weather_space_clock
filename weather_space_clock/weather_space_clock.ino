@@ -128,7 +128,6 @@ struct SpaceWxData {
     bool      ok;
     float     kp;             // 0-9
     int       windSpeed;       // km/s (solar wind)
-    float     bz;             // nT
     char      flareClass[8];   // e.g. "M2.5"
     char      error[40];
 };
